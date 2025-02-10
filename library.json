@@ -1,0 +1,30 @@
+{
+	"name": "RaptorCLI",
+	"version": "1.0.0",
+	"description": "A lightweight and simple, C++98 compatible command-line parser that works on the Arduino framework.",
+	"keywords": [
+		"command-line",
+		"cli",
+		"parser",
+		"arduino"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/smegg99/RaptorCLI.git"
+	},
+	"authors": [
+		{
+			"name": "Smegg99",
+			"email": "smegg99@smuggr.xyz",
+			"maintainer": true
+		}
+	],
+	"license": "MIT",
+	"frameworks": [
+		"arduino"
+	],
+	"platforms": [
+		"*"
+	],
+	"category": "Communication"
+}
