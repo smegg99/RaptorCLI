@@ -1,5 +1,5 @@
-#ifndef CLIPARSER_H
-#define CLIPARSER_H
+#ifndef RAPTORCLI_H
+#define RAPTORCLI_H
 
 #include "Value.h"
 #include "Argument.h"

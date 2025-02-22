@@ -1,6 +1,6 @@
 #include <iostream>
 #include <vector>
-#include "CLIParser.h"
+#include "RaptorCLI.h"
 
 // Callback for the "calc" command.
 // Expects three arguments:
