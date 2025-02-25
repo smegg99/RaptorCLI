@@ -1,9 +1,15 @@
+// include/value.h
 #ifndef VALUE_H
 #define VALUE_H
 
+#include "config.h"
 #include <string>
 #include <vector>
 #include <cstdio>
+
+#define LIST_SEPARATOR ", "
+#define BOOL_TRUE "true"
+#define BOOL_FALSE "false"
 
 enum ValueType {
 	VAL_NONE,
@@ -61,7 +67,7 @@ public:
 			std::sprintf(buffer, "%f", doubleValue);
 			return std::string(buffer);
 		case VAL_BOOL:
-			return boolValue ? "true" : "false";
+			return boolValue ? BOOL_TRUE : BOOL_FALSE;
 		case VAL_STRING:
 			return stringValue;
 		case VAL_LIST: {
@@ -69,7 +75,7 @@ public:
 			for (size_t i = 0; i < listValue.size(); i++) {
 				result += listValue[i].toString();
 				if (i < listValue.size() - 1)
-					result += ", ";
+					result += LIST_SEPARATOR;
 			}
 			result += "]";
 			return result;
@@ -77,6 +83,10 @@ public:
 		default:
 			return "";
 		}
+	}
+
+	const char* toCString() const {
+		return toString().c_str();
 	}
 };
 

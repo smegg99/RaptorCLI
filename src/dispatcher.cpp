@@ -1,10 +1,11 @@
-#include "Dispatcher.h"
-#include "CLIOutput.h"
+// src/dispatcher.cpp
+#include "config.h"
+#include "dispatcher.h"
+#include "clioutput.h"
 #include <sstream>
 #include <cctype>
 #include <cstdlib>
 #include <cstdio>
-#include <stdexcept>
 #include <set>
 
 #define QUOTE_CHAR '"'  
@@ -13,18 +14,22 @@
 #define DECIMAL_POINT '.'
 #define DELIMITER_CHAR ','
 #define NULL_CHAR '\0'
-#define LIST_START '['  
-#define LIST_END ']'  
 #define HELP_FLAG_SHORT "h"  
-#define HELP_FLAG_LONG "help"  
+#define HELP_FLAG_LONG "help"
+#define LIST_START '['
+#define LIST_END ']'
 
 enum TokenizerState { TS_OUTSIDE, TS_IN_QUOTE, TS_IN_ESCAPE, TS_IN_LIST };
 
 static Dispatcher* gDispatcher = 0;
 
-static void helpCommandCallback(const Command& cmd) {
-	if (gDispatcher) {
-		gDispatcher->printGlobalHelp();
+// Helper to report an error via the registered output (or Serial as fallback, just in case).
+static void reportError(CLIOutput* output, const std::string& msg) {
+	if (output) {
+		output->println(("Error: " + msg).c_str());
+	}
+	else {
+		Serial.println(("Error: " + msg).c_str());
 	}
 }
 
@@ -90,29 +95,33 @@ static std::vector<std::string> splitListItems(const std::string& input) {
 
 Dispatcher::Dispatcher() {
 	gDispatcher = this;
-	Command helpCmd("help", "Displays help information for all commands.");
-	helpCmd.addAlias("?");
-	helpCmd.callback = helpCommandCallback;
-	registerCommand(helpCmd);
 }
 
-void Dispatcher::registerCommand(const Command& cmd) {
+void Dispatcher::registerOutput(CLIOutput* output) {
+	this->output = output;
+}
+
+bool Dispatcher::registerCommand(const Command& cmd) {
 	for (size_t i = 0; i < commands.size(); i++) {
 		if (commands[i].name == cmd.name) {
-			throw std::runtime_error("Duplicate command name: " + cmd.name);
+			reportError(output, "Duplicate command name: " + cmd.name);
+			return false;
 		}
 		for (size_t j = 0; j < cmd.aliases.size(); j++) {
 			if (commands[i].name == cmd.aliases[j]) {
-				throw std::runtime_error("Duplicate command alias: " + cmd.aliases[j]);
+				reportError(output, "Duplicate command alias: " + cmd.aliases[j]);
+				return false;
 			}
 			for (size_t k = 0; k < commands[i].aliases.size(); k++) {
 				if (commands[i].aliases[k] == cmd.aliases[j]) {
-					throw std::runtime_error("Duplicate command alias: " + cmd.aliases[j]);
+					reportError(output, "Duplicate command alias: " + cmd.aliases[j]);
+					return false;
 				}
 			}
 		}
 	}
 	commands.push_back(cmd);
+	return true;
 }
 
 std::vector<std::string> Dispatcher::tokenize(const std::string& input) {
@@ -237,16 +246,18 @@ const Command* Dispatcher::matchCommand(const std::vector<std::string>& tokens, 
 	return 0;
 }
 
-void Dispatcher::parseArguments(const std::vector<std::string>& tokens, size_t index, std::vector<Argument>& outArgs) {
+bool Dispatcher::parseArguments(const std::vector<std::string>& tokens, size_t index, std::vector<Argument>& outArgs) {
 	std::set<std::string> seenArgs;
 	while (index < tokens.size()) {
 		std::string token = tokens[index];
 		if (token.empty() || !isFlagToken(token)) {
-			throw std::runtime_error("Unexpected token: " + token);
+			reportError(output, "Unexpected token: " + token);
+			return false;
 		}
 		std::string argName = token.substr(1);
 		if (seenArgs.find(argName) != seenArgs.end()) {
-			throw std::runtime_error("Duplicate argument: " + argName);
+			reportError(output, "Duplicate argument: " + argName);
+			return false;
 		}
 		seenArgs.insert(argName);
 		Argument arg(argName);
@@ -263,6 +274,7 @@ void Dispatcher::parseArguments(const std::vector<std::string>& tokens, size_t i
 		}
 		outArgs.push_back(arg);
 	}
+	return true;
 }
 
 Value Dispatcher::parseValue(const std::string& token) {
@@ -312,13 +324,17 @@ bool Dispatcher::dispatch(const std::string& input) {
 	size_t index = 0;
 	const Command* cmd = matchCommand(tokens, index);
 	if (!cmd) {
-		throw std::runtime_error("Unknown command.");
+		reportError(output, "Unknown command.");
+		return false;
 	}
 	if (index < tokens.size() && (tokens[index].empty() || !isFlagToken(tokens[index]))) {
-		throw std::runtime_error("Unexpected token: " + tokens[index]);
+		reportError(output, "Unexpected token: " + tokens[index]);
+		return false;
 	}
 	std::vector<Argument> parsedArgs;
-	parseArguments(tokens, index, parsedArgs);
+	if (!parseArguments(tokens, index, parsedArgs)) {
+		return false;
+	}
 
 	bool foundHelpShort = false, foundHelpLong = false;
 	for (size_t i = 0; i < parsedArgs.size(); i++) {
@@ -328,10 +344,11 @@ bool Dispatcher::dispatch(const std::string& input) {
 			foundHelpLong = true;
 	}
 	if (foundHelpShort && foundHelpLong) {
-		throw std::runtime_error("Duplicate help flag: both -h and -help provided.");
+		reportError(output, "Duplicate help flag: both -h and -help provided.");
+		return false;
 	}
 	if (foundHelpShort || foundHelpLong) {
-		cmd->printUsage();
+		cmd->printUsage("", output);
 		return true;
 	}
 
@@ -342,7 +359,8 @@ bool Dispatcher::dispatch(const std::string& input) {
 		for (size_t j = 0; j < parsedArgs.size(); j++) {
 			if (parsedArgs[j].name == spec.name) {
 				if (parsedArgs[j].values.empty()) {
-					throw std::runtime_error("Argument " + spec.name + " has no value.");
+					reportError(output, "Argument " + spec.name + " has no value.");
+					return false;
 				}
 				Value provided = parsedArgs[j].values[0];
 				if (spec.type == VAL_DOUBLE) {
@@ -351,11 +369,13 @@ bool Dispatcher::dispatch(const std::string& input) {
 						provided.type = VAL_DOUBLE;
 					}
 					else if (provided.type != VAL_DOUBLE) {
-						throw std::runtime_error("Type mismatch for argument: " + spec.name);
+						reportError(output, "Type mismatch for argument: " + spec.name);
+						return false;
 					}
 				}
 				else if (provided.type != spec.type) {
-					throw std::runtime_error("Type mismatch for argument: " + spec.name);
+					reportError(output, "Type mismatch for argument: " + spec.name);
+					return false;
 				}
 				parsedArgs[j].values[0] = provided;
 				mergedArgs.push_back(parsedArgs[j]);
@@ -365,7 +385,8 @@ bool Dispatcher::dispatch(const std::string& input) {
 		}
 		if (!found) {
 			if (spec.required && !spec.hasDefault) {
-				throw std::runtime_error("Required argument missing: " + spec.name);
+				reportError(output, "Required argument missing: " + spec.name);
+				return false;
 			}
 			if (spec.hasDefault) {
 				Argument defaultArg(spec.name);
@@ -383,7 +404,8 @@ bool Dispatcher::dispatch(const std::string& input) {
 			}
 		}
 		if (!recognized) {
-			throw std::runtime_error("Unknown argument provided: " + parsedArgs[j].name);
+			reportError(output, "Unknown argument provided: " + parsedArgs[j].name);
+			return false;
 		}
 	}
 
@@ -393,12 +415,18 @@ bool Dispatcher::dispatch(const std::string& input) {
 		execCmd.callback(execCmd);
 		return true;
 	}
-	return false;
+	else {
+		reportError(output, "No callback defined for command: " + execCmd.name);
+		return false;
+	}
 }
 
 void Dispatcher::printGlobalHelp() const {
-	CLI::println("Global Help:");
 	for (size_t i = 0; i < commands.size(); i++) {
-		commands[i].printUsage("  ");
+		commands[i].printUsage("  ", output);
 	}
+}
+
+CLIOutput* Dispatcher::getOutput() {
+	return output;
 }
