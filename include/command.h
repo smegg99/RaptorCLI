@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "argument.h"
+#include <cstddef>
 #include "clioutput.h"
 
 class Command;

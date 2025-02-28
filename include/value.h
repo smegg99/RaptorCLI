@@ -2,7 +2,6 @@
 #ifndef VALUE_H
 #define VALUE_H
 
-#include "config.h"
 #include <string>
 #include <vector>
 #include <cstdio>

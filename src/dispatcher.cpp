@@ -1,5 +1,4 @@
 // src/dispatcher.cpp
-#include "config.h"
 #include "dispatcher.h"
 #include "clioutput.h"
 #include <sstream>
@@ -7,6 +6,10 @@
 #include <cstdlib>
 #include <cstdio>
 #include <set>
+
+namespace {
+	static Dispatcher* gDispatcher = nullptr;
+}
 
 #define QUOTE_CHAR '"'  
 #define ESCAPE_CHAR '\\'  
@@ -18,20 +21,189 @@
 #define HELP_FLAG_LONG "help"
 #define LIST_START '['
 #define LIST_END ']'
+#define COMMAND_DELIMITER ';'
 
-enum TokenizerState { TS_OUTSIDE, TS_IN_QUOTE, TS_IN_ESCAPE, TS_IN_LIST };
+// Helper function to trim whitespace from both ends of a string.
+static std::string trim(const std::string& s) {
+	size_t start = 0;
+	while (start < s.size() && std::isspace(s[start]))
+		start++;
+	size_t end = s.size();
+	while (end > start && std::isspace(s[end - 1]))
+		end--;
+	return s.substr(start, end - start);
+}
 
-static Dispatcher* gDispatcher = 0;
+// Splits input string into separate commands using ';' as delimiter.
+enum SplitState { SS_OUTSIDE, SS_IN_QUOTE, SS_IN_ESCAPE, SS_IN_LIST };
+static std::vector<std::string> splitCommands(const std::string& input) {
+	std::vector<std::string> commands;
+	std::string current;
+	SplitState state = SS_OUTSIDE;
+	for (char c : input) {
+		switch (state) {
+		case SS_OUTSIDE:
+			if (c == COMMAND_DELIMITER) {
+				commands.push_back(current);
+				current.clear();
+			}
+			else if (c == QUOTE_CHAR) {
+				state = SS_IN_QUOTE;
+				current.push_back(c);
+			}
+			else if (c == LIST_START) {
+				state = SS_IN_LIST;
+				current.push_back(c);
+			}
+			else {
+				current.push_back(c);
+			}
+			break;
+		case SS_IN_QUOTE:
+			if (c == ESCAPE_CHAR) {
+				state = SS_IN_ESCAPE;
+				current.push_back(c);
+			}
+			else if (c == QUOTE_CHAR) {
+				state = SS_OUTSIDE;
+				current.push_back(c);
+			}
+			else {
+				current.push_back(c);
+			}
+			break;
+		case SS_IN_ESCAPE:
+			current.push_back(c);
+			state = SS_IN_QUOTE;
+			break;
+		case SS_IN_LIST:
+			current.push_back(c);
+			if (c == LIST_END) {
+				state = SS_OUTSIDE;
+			}
+			break;
+		}
+	}
+	if (!current.empty()) {
+		commands.push_back(current);
+	}
+	return commands;
+}
 
 // Helper to report an error via the registered output (or Serial as fallback, just in case).
 static void reportError(CLIOutput* output, const std::string& msg) {
 	if (output) {
 		output->println(("Error: " + msg).c_str());
 	}
+
+#ifdef ARDUINO
 	else {
 		Serial.println(("Error: " + msg).c_str());
 	}
+#endif
+
 }
+
+bool Dispatcher::dispatchSingleCommand(const std::string& command) {
+	std::vector<std::string> tokens = tokenize(command);
+	size_t index = 0;
+	const Command* cmd = matchCommand(tokens, index);
+	if (!cmd) {
+		reportError(output, "Unknown command.");
+		return false;
+	}
+	if (index < tokens.size() && (tokens[index].empty() || tokens[index][0] != DASH_CHAR)) {
+		reportError(output, "Unexpected token: " + tokens[index]);
+		return false;
+	}
+	std::vector<Argument> parsedArgs;
+	if (!parseArguments(tokens, index, parsedArgs)) {
+		return false;
+	}
+	bool foundHelpShort = false, foundHelpLong = false;
+	for (size_t i = 0; i < parsedArgs.size(); i++) {
+		if (parsedArgs[i].name == HELP_FLAG_SHORT)
+			foundHelpShort = true;
+		if (parsedArgs[i].name == HELP_FLAG_LONG)
+			foundHelpLong = true;
+	}
+	if (foundHelpShort && foundHelpLong) {
+		reportError(output, "Duplicate help flag: both -h and -help provided.");
+		return false;
+	}
+	if (foundHelpShort || foundHelpLong) {
+		cmd->printUsage("", output);
+		return true;
+	}
+	std::vector<Argument> mergedArgs;
+	for (size_t i = 0; i < cmd->argSpecs.size(); i++) {
+		const ArgSpec& spec = cmd->argSpecs[i];
+		bool found = false;
+		for (size_t j = 0; j < parsedArgs.size(); j++) {
+			if (parsedArgs[j].name == spec.name) {
+				if (parsedArgs[j].values.empty()) {
+					reportError(output, "Argument " + spec.name + " has no value.");
+					return false;
+				}
+				Value provided = parsedArgs[j].values[0];
+				if (spec.type == VAL_DOUBLE) {
+					if (provided.type == VAL_INT) {
+						provided.doubleValue = (double)provided.intValue;
+						provided.type = VAL_DOUBLE;
+					}
+					else if (provided.type != VAL_DOUBLE) {
+						reportError(output, "Type mismatch for argument: " + spec.name);
+						return false;
+					}
+				}
+				else if (provided.type != spec.type) {
+					reportError(output, "Type mismatch for argument: " + spec.name);
+					return false;
+				}
+				parsedArgs[j].values[0] = provided;
+				mergedArgs.push_back(parsedArgs[j]);
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			if (spec.required && !spec.hasDefault) {
+				reportError(output, "Required argument missing: " + spec.name);
+				return false;
+			}
+			if (spec.hasDefault) {
+				Argument defaultArg(spec.name);
+				defaultArg.values.push_back(spec.defaultValue);
+				mergedArgs.push_back(defaultArg);
+			}
+		}
+	}
+	for (size_t j = 0; j < parsedArgs.size(); j++) {
+		bool recognized = false;
+		for (size_t i = 0; i < cmd->argSpecs.size(); i++) {
+			if (parsedArgs[j].name == cmd->argSpecs[i].name) {
+				recognized = true;
+				break;
+			}
+		}
+		if (!recognized) {
+			reportError(output, "Unknown argument provided: " + parsedArgs[j].name);
+			return false;
+		}
+	}
+	Command execCmd = *cmd;
+	execCmd.arguments = mergedArgs;
+	if (execCmd.callback) {
+		execCmd.callback(execCmd);
+		return true;
+	}
+	else {
+		reportError(output, "No callback defined for command: " + execCmd.name);
+		return false;
+	}
+}
+
+enum TokenizerState { TS_OUTSIDE, TS_IN_QUOTE, TS_IN_ESCAPE, TS_IN_LIST };
 
 static bool isFlagToken(const std::string& token) {
 	if (token.empty())
@@ -134,7 +306,7 @@ std::vector<std::string> Dispatcher::tokenize(const std::string& input) {
 		case TS_OUTSIDE:
 			if (isspace(c)) {
 				if (!token.empty()) {
-					tokens.push_back(token);
+					tokens.push_back(trim(token));
 					token.clear();
 				}
 			}
@@ -174,7 +346,7 @@ std::vector<std::string> Dispatcher::tokenize(const std::string& input) {
 		}
 	}
 	if (!token.empty()) {
-		tokens.push_back(token);
+		tokens.push_back(trim(token));
 	}
 	return tokens;
 }
@@ -320,105 +492,18 @@ Value Dispatcher::parseList(const std::string& token) {
 }
 
 bool Dispatcher::dispatch(const std::string& input) {
-	std::vector<std::string> tokens = tokenize(input);
-	size_t index = 0;
-	const Command* cmd = matchCommand(tokens, index);
-	if (!cmd) {
-		reportError(output, "Unknown command.");
-		return false;
+	std::string cleanedInput = trim(input);
+	std::vector<std::string> commandStrings = splitCommands(cleanedInput);
+	bool overallSuccess = true;
+	for (const auto& cmdStr : commandStrings) {
+		std::string trimmedCmd = trim(cmdStr);
+		if (trimmedCmd.empty())
+			continue;
+		bool result = dispatchSingleCommand(trimmedCmd);
+		if (!result)
+			overallSuccess = false;
 	}
-	if (index < tokens.size() && (tokens[index].empty() || !isFlagToken(tokens[index]))) {
-		reportError(output, "Unexpected token: " + tokens[index]);
-		return false;
-	}
-	std::vector<Argument> parsedArgs;
-	if (!parseArguments(tokens, index, parsedArgs)) {
-		return false;
-	}
-
-	bool foundHelpShort = false, foundHelpLong = false;
-	for (size_t i = 0; i < parsedArgs.size(); i++) {
-		if (parsedArgs[i].name == HELP_FLAG_SHORT)
-			foundHelpShort = true;
-		if (parsedArgs[i].name == HELP_FLAG_LONG)
-			foundHelpLong = true;
-	}
-	if (foundHelpShort && foundHelpLong) {
-		reportError(output, "Duplicate help flag: both -h and -help provided.");
-		return false;
-	}
-	if (foundHelpShort || foundHelpLong) {
-		cmd->printUsage("", output);
-		return true;
-	}
-
-	std::vector<Argument> mergedArgs;
-	for (size_t i = 0; i < cmd->argSpecs.size(); i++) {
-		const ArgSpec& spec = cmd->argSpecs[i];
-		bool found = false;
-		for (size_t j = 0; j < parsedArgs.size(); j++) {
-			if (parsedArgs[j].name == spec.name) {
-				if (parsedArgs[j].values.empty()) {
-					reportError(output, "Argument " + spec.name + " has no value.");
-					return false;
-				}
-				Value provided = parsedArgs[j].values[0];
-				if (spec.type == VAL_DOUBLE) {
-					if (provided.type == VAL_INT) {
-						provided.doubleValue = (double)provided.intValue;
-						provided.type = VAL_DOUBLE;
-					}
-					else if (provided.type != VAL_DOUBLE) {
-						reportError(output, "Type mismatch for argument: " + spec.name);
-						return false;
-					}
-				}
-				else if (provided.type != spec.type) {
-					reportError(output, "Type mismatch for argument: " + spec.name);
-					return false;
-				}
-				parsedArgs[j].values[0] = provided;
-				mergedArgs.push_back(parsedArgs[j]);
-				found = true;
-				break;
-			}
-		}
-		if (!found) {
-			if (spec.required && !spec.hasDefault) {
-				reportError(output, "Required argument missing: " + spec.name);
-				return false;
-			}
-			if (spec.hasDefault) {
-				Argument defaultArg(spec.name);
-				defaultArg.values.push_back(spec.defaultValue);
-				mergedArgs.push_back(defaultArg);
-			}
-		}
-	}
-	for (size_t j = 0; j < parsedArgs.size(); j++) {
-		bool recognized = false;
-		for (size_t i = 0; i < cmd->argSpecs.size(); i++) {
-			if (parsedArgs[j].name == cmd->argSpecs[i].name) {
-				recognized = true;
-				break;
-			}
-		}
-		if (!recognized) {
-			reportError(output, "Unknown argument provided: " + parsedArgs[j].name);
-			return false;
-		}
-	}
-
-	Command execCmd = *cmd;
-	execCmd.arguments = mergedArgs;
-	if (execCmd.callback) {
-		execCmd.callback(execCmd);
-		return true;
-	}
-	else {
-		reportError(output, "No callback defined for command: " + execCmd.name);
-		return false;
-	}
+	return overallSuccess;
 }
 
 void Dispatcher::printGlobalHelp() const {
