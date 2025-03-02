@@ -7,5 +7,6 @@
 #include "argument.h"
 #include "command.h"
 #include "dispatcher.h"
+#include "executable_command.h"
 
 #endif
