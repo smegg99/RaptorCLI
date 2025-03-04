@@ -1,6 +1,7 @@
 // src/dispatcher.cpp
 #include "dispatcher.h"
 #include "clioutput.h"
+#include "RaptorCLI.h"
 #include <sstream>
 #include <cctype>
 #include <cstdlib>
@@ -91,14 +92,14 @@ static std::vector<std::string> splitCommands(const std::string& input) {
 }
 
 // Helper to report an error via the registered output (or Serial as fallback, just in case).
-static void reportError(CLIOutput* output, const std::string& msg) {
+void reportError(CLIOutput* output, const std::string& msg) {
 	if (output) {
-		output->println(("Error: " + msg).c_str());
+		output->println(msg);
 	}
 
 #ifdef ARDUINO
 	else {
-		Serial.println(("Error: " + msg).c_str());
+		Serial.println(msg.c_str());
 	}
 #endif
 
@@ -109,11 +110,19 @@ bool Dispatcher::dispatchSingleCommand(const std::string& command) {
 	size_t index = 0;
 	const Command* cmd = matchCommand(tokens, index);
 	if (!cmd) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 		reportError(output, "Unknown command.");
+#else
+		reportError(output, ERROR_CMD_UNKNOWN);
+#endif
 		return false;
 	}
 	if (index < tokens.size() && (tokens[index].empty() || tokens[index][0] != DASH_CHAR)) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 		reportError(output, "Unexpected token: " + tokens[index]);
+#else
+		reportError(output, ERROR_CMD_UNEXPECTED_TOKEN);
+#endif
 		return false;
 	}
 	std::vector<Argument> parsedArgs;
@@ -128,7 +137,11 @@ bool Dispatcher::dispatchSingleCommand(const std::string& command) {
 			foundHelpLong = true;
 	}
 	if (foundHelpShort && foundHelpLong) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 		reportError(output, "Duplicate help flag: both -h and -help provided.");
+#else
+		reportError(output, ERROR_CMD_DUPLICATE_HELP_FLAG);
+#endif
 		return false;
 	}
 	if (foundHelpShort || foundHelpLong) {
@@ -142,7 +155,11 @@ bool Dispatcher::dispatchSingleCommand(const std::string& command) {
 		for (size_t j = 0; j < parsedArgs.size(); j++) {
 			if (parsedArgs[j].name == spec.name) {
 				if (parsedArgs[j].values.empty()) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 					reportError(output, "Argument " + spec.name + " has no value.");
+#else
+					reportError(output, ERROR_CMD_MISSING_REQUIRED_ARG);
+#endif
 					return false;
 				}
 				Value provided = parsedArgs[j].values[0];
@@ -152,12 +169,20 @@ bool Dispatcher::dispatchSingleCommand(const std::string& command) {
 						provided.type = VAL_DOUBLE;
 					}
 					else if (provided.type != VAL_DOUBLE) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 						reportError(output, "Type mismatch for argument: " + spec.name);
+#else
+						reportError(output, ERROR_CMD_TYPE_MISMATCH);
+#endif
 						return false;
 					}
 				}
 				else if (provided.type != spec.type) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 					reportError(output, "Type mismatch for argument: " + spec.name);
+#else
+					reportError(output, ERROR_CMD_TYPE_MISMATCH);
+#endif
 					return false;
 				}
 				parsedArgs[j].values[0] = provided;
@@ -168,7 +193,11 @@ bool Dispatcher::dispatchSingleCommand(const std::string& command) {
 		}
 		if (!found) {
 			if (spec.required && !spec.hasDefault) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 				reportError(output, "Required argument missing: " + spec.name);
+#else
+				reportError(output, ERROR_CMD_MISSING_REQUIRED_ARG);
+#endif
 				return false;
 			}
 			if (spec.hasDefault) {
@@ -178,19 +207,6 @@ bool Dispatcher::dispatchSingleCommand(const std::string& command) {
 			}
 		}
 	}
-	for (size_t j = 0; j < parsedArgs.size(); j++) {
-		bool recognized = false;
-		for (size_t i = 0; i < cmd->argSpecs.size(); i++) {
-			if (parsedArgs[j].name == cmd->argSpecs[i].name) {
-				recognized = true;
-				break;
-			}
-		}
-		if (!recognized) {
-			reportError(output, "Unknown argument provided: " + parsedArgs[j].name);
-			return false;
-		}
-	}
 	Command execCmd = *cmd;
 	execCmd.arguments = mergedArgs;
 	if (execCmd.callback) {
@@ -198,7 +214,11 @@ bool Dispatcher::dispatchSingleCommand(const std::string& command) {
 		return true;
 	}
 	else {
+#ifdef USE_DESCRIPTIVE_ERRORS
 		reportError(output, "No callback defined for command: " + execCmd.name);
+#else
+		reportError(output, ERROR_CMD_NO_CALLBACK);
+#endif
 		return false;
 	}
 }
@@ -276,20 +296,32 @@ void Dispatcher::registerOutput(CLIOutput* output) {
 bool Dispatcher::registerCommand(const Command& cmd) {
 	for (size_t i = 0; i < commands.size(); i++) {
 		if (commands[i].name == cmd.name) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 			reportError(output, "Duplicate command name: " + cmd.name);
+#else
+			reportError(output, ERROR_CMD_DUPLICATE_NAME);
+#endif
 			return false;
 		}
 		for (size_t j = 0; j < cmd.aliases.size(); j++) {
 			if (commands[i].name == cmd.aliases[j]) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 				reportError(output, "Duplicate command alias: " + cmd.aliases[j]);
+#else
+				reportError(output, ERROR_CMD_DUPLICATE_ALIAS);
+#endif
 				return false;
 			}
 			for (size_t k = 0; k < commands[i].aliases.size(); k++) {
 				if (commands[i].aliases[k] == cmd.aliases[j]) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 					reportError(output, "Duplicate command alias: " + cmd.aliases[j]);
+#else
+					reportError(output, ERROR_CMD_DUPLICATE_ALIAS);
+#endif
 					return false;
-				}
 			}
+		}
 		}
 	}
 	commands.push_back(cmd);
@@ -423,12 +455,20 @@ bool Dispatcher::parseArguments(const std::vector<std::string>& tokens, size_t i
 	while (index < tokens.size()) {
 		std::string token = tokens[index];
 		if (token.empty() || !isFlagToken(token)) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 			reportError(output, "Unexpected token: " + token);
+#else
+			reportError(output, ERROR_CMD_UNEXPECTED_TOKEN);
+#endif
 			return false;
 		}
 		std::string argName = token.substr(1);
 		if (seenArgs.find(argName) != seenArgs.end()) {
+#ifdef USE_DESCRIPTIVE_ERRORS
 			reportError(output, "Duplicate argument: " + argName);
+#else
+			reportError(output, ERROR_CMD_DUPLICATE_NAME);
+#endif
 			return false;
 		}
 		seenArgs.insert(argName);
@@ -443,11 +483,11 @@ bool Dispatcher::parseArguments(const std::vector<std::string>& tokens, size_t i
 				arg.values.push_back(parseValue(valueToken));
 			}
 			index++;
-		}
+			}
 		outArgs.push_back(arg);
-	}
+		}
 	return true;
-}
+	}
 
 Value Dispatcher::parseValue(const std::string& token) {
 	char* endptr = 0;

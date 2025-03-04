@@ -15,15 +15,20 @@ class Command {
 public:
 	std::string name;
 	std::string description;
-	std::vector<std::string> aliases;    // Additional names for the command
-	std::vector<Command> subcommands;    // Optional child commands
-	std::vector<Argument> arguments;     // Parsed arguments after dispatch
-	std::vector<ArgSpec> argSpecs;       // Declared expected arguments
+	std::vector<std::string> aliases; // Additional names for the command
+	std::vector<Command> subcommands; // Optional child commands
+	std::vector<Argument> arguments;  // Parsed arguments after dispatch
+	std::vector<ArgSpec> argSpecs;    // Declared expected arguments
+
+	bool variadic;
 
 	CommandCallback callback;
 
 	Command();
 	Command(const std::string& cmdName, const std::string& desc = "");
+
+	// Set the command to accept arbitrary extra arguments.
+	void setVariadic(bool v) { variadic = v; }
 
 	// Add a subcommand (returns true if added successfully, false on error).
 	bool addSubcommand(const Command& cmd);

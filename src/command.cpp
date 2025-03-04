@@ -1,42 +1,44 @@
 // src/command.cpp
 #include "command.h"
 #include "clioutput.h"
+#include "dispatcher.h"
+#include "RaptorCLI.h"
+#include <string>
 
-Command::Command() : name(""), callback(0), output(nullptr) {}
+extern void reportError(CLIOutput* output, const std::string& message);
+
+Command::Command() : name(""), callback(0), output(nullptr), variadic(false) {}
 
 Command::Command(const std::string& cmdName, const std::string& desc)
-	: name(cmdName), description(desc), callback(0), output(nullptr) {
+	: name(cmdName), description(desc), callback(0), output(nullptr), variadic(false) {
 }
 
 bool Command::addSubcommand(const Command& cmd) {
 	for (size_t i = 0; i < subcommands.size(); i++) {
 		if (subcommands[i].name == cmd.name) {
-			if (output) {
-				output->println(("Error: Duplicate subcommand name: " + cmd.name).c_str());
-			}
-			else {
-				Serial.println(("Error: Duplicate subcommand name: " + cmd.name).c_str());
-			}
+#ifdef USE_DESCRIPTIVE_ERRORS
+			reportError(output, "Duplicate subcommand name: " + cmd.name);
+#else
+			reportError(output, ERROR_CMD_DUPLICATE_NAME);
+#endif
 			return false;
 		}
 		for (size_t j = 0; j < cmd.aliases.size(); j++) {
 			if (subcommands[i].name == cmd.aliases[j]) {
-				if (output) {
-					output->println(("Error: Duplicate subcommand alias: " + cmd.aliases[j]).c_str());
-				}
-				else {
-					Serial.println(("Error: Duplicate subcommand alias: " + cmd.aliases[j]).c_str());
-				}
+#ifdef USE_DESCRIPTIVE_ERRORS
+				reportError(output, "Duplicate subcommand alias: " + cmd.aliases[j]);
+#else
+				reportError(output, ERROR_CMD_DUPLICATE_ALIAS);
+#endif
 				return false;
 			}
 			for (size_t k = 0; k < subcommands[i].aliases.size(); k++) {
 				if (subcommands[i].aliases[k] == cmd.aliases[j]) {
-					if (output) {
-						output->println(("Error: Duplicate subcommand alias: " + cmd.aliases[j]).c_str());
-					}
-					else {
-						Serial.println(("Error: Duplicate subcommand alias: " + cmd.aliases[j]).c_str());
-					}
+#ifdef USE_DESCRIPTIVE_ERRORS
+					reportError(output, "Duplicate subcommand alias: " + cmd.aliases[j]);
+#else
+					reportError(output, ERROR_CMD_DUPLICATE_ALIAS);
+#endif
 					return false;
 				}
 			}
@@ -48,22 +50,20 @@ bool Command::addSubcommand(const Command& cmd) {
 
 bool Command::addAlias(const std::string& alias) {
 	if (alias == name) {
-		if (output) {
-			output->println(("Error: Alias cannot be the same as the command name: " + alias).c_str());
-		}
-		else {
-			Serial.println(("Error: Alias cannot be the same as the command name: " + alias).c_str());
-		}
+#ifdef USE_DESCRIPTIVE_ERRORS
+		reportError(output, "Alias cannot be the same as the command name: " + alias);
+#else
+		reportError(output, ERROR_CMD_DUPLICATE_ALIAS);
+#endif
 		return false;
 	}
 	for (size_t i = 0; i < aliases.size(); i++) {
 		if (aliases[i] == alias) {
-			if (output) {
-				output->println(("Error: Duplicate alias: " + alias).c_str());
-			}
-			else {
-				Serial.println(("Error: Duplicate alias: " + alias).c_str());
-			}
+#ifdef USE_DESCRIPTIVE_ERRORS
+			reportError(output, "Duplicate alias: " + alias);
+#else
+			reportError(output, ERROR_CMD_DUPLICATE_ALIAS);
+#endif
 			return false;
 		}
 	}
@@ -74,12 +74,11 @@ bool Command::addAlias(const std::string& alias) {
 bool Command::addArgSpec(const ArgSpec& spec) {
 	for (size_t i = 0; i < argSpecs.size(); i++) {
 		if (argSpecs[i].name == spec.name) {
-			if (output) {
-				output->println(("Error: Duplicate argument specification: " + spec.name).c_str());
-			}
-			else {
-				Serial.println(("Error: Duplicate argument specification: " + spec.name).c_str());
-			}
+#ifdef USE_DESCRIPTIVE_ERRORS
+			reportError(output, "Duplicate argument name: " + spec.name);
+#else
+			reportError(output, ERROR_CMD_DUPLICATE_NAME);
+#endif
 			return false;
 		}
 	}

@@ -1,7 +1,6 @@
 // src/executable_command.cpp
 #include "executable_command.h"
 #include "clioutput.h"
-#include "config.h"
 
 ExecutableCommand::ExecutableCommand(const Command& baseCmd, const std::vector<Argument>& presetArgs)
 	: baseCommand(baseCmd), presetArgs(presetArgs) {
@@ -20,6 +19,28 @@ bool ExecutableCommand::execute() const {
 	if (baseCommand.callback) {
 		Command execCmd = baseCommand;
 		execCmd.arguments = presetArgs;
+		execCmd.callback(execCmd);
+		return true;
+	}
+	else {
+		CLIOutput* out = baseCommand.getOutput();
+		if (out) {
+			out->println("Error: No callback defined for command: " + baseCommand.name);
+		}
+		return false;
+	}
+}
+
+bool ExecutableCommand::executeWithArgs(std::initializer_list<std::pair<std::string, Value>> argsList) const {
+	std::vector<Argument> args;
+	for (const auto& p : argsList) {
+		Argument arg(p.first);
+		arg.values.push_back(p.second);
+		args.push_back(arg);
+	}
+	if (baseCommand.callback) {
+		Command execCmd = baseCommand;
+		execCmd.arguments = args;
 		execCmd.callback(execCmd);
 		return true;
 	}
@@ -68,8 +89,32 @@ std::string ExecutableCommand::toString() const {
 	return result;
 }
 
+std::string ExecutableCommand::toStringWithArgs(std::initializer_list<std::pair<std::string, Value>> argsList) const {
+	std::string result = baseCommand.name;
+	for (const auto& p : argsList) {
+		result += " -" + p.first + " " + formatValue(p.second);
+	}
+	return result;
+}
+
+void ExecutableCommand::toOutputWithArgs(std::initializer_list<std::pair<std::string, Value>> argsList) const {
+	std::string cmdStr = toStringWithArgs(argsList);
+	CLIOutput* out = baseCommand.getOutput();
+	if (out) {
+		out->println(cmdStr);
+	}
+}
+
 const Command& ExecutableCommand::getBaseCommand() const {
 	return baseCommand;
+}
+
+std::vector<Argument> ExecutableCommand::getPresetArgs() const {
+	return presetArgs;
+}
+
+void ExecutableCommand::setArgs(const std::vector<Argument>& presetArgs) {
+	this->presetArgs = presetArgs;
 }
 
 void CommandSequence::addCommand(const ExecutableCommand& cmd) {

@@ -10,6 +10,8 @@
 #define BOOL_TRUE "true"
 #define BOOL_FALSE "false"
 
+// TODO: Fix intepreting args like: "123" as numbers
+// TODO: Add support for VAL_ANY
 enum ValueType {
 	VAL_NONE,
 	VAL_INT,
