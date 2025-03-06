@@ -10,9 +10,16 @@
 // The Dispatcher class is responsible for tokenizing, parsing, and executing CLI commands.
 class Dispatcher {
 public:
+	typedef std::function<void(const std::string&)> ErrorCallback;
 	Dispatcher();
 
 	CLIOutput* output;
+
+	// Report an error message to the registered output.
+	void reportError(const std::string& msg);
+
+	// Register an error callback for handling errors.
+	void registerErrorCallback(ErrorCallback callback);
 
 	// Register an output interface for printing CLI messages.
 	void registerOutput(CLIOutput* output);
@@ -30,6 +37,7 @@ public:
 	// Get the current output interface.
 	CLIOutput* getOutput();
 private:
+	ErrorCallback errorCallback;
 	std::vector<Command> commands;
 
 	// Tokenize an input string into individual tokens.

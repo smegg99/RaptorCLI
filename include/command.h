@@ -25,7 +25,7 @@ public:
 	CommandCallback callback;
 
 	Command();
-	Command(const std::string& cmdName, const std::string& desc = "");
+	Command(const std::string& cmdName, const std::string& desc = "", CLIOutput* output = nullptr, CommandCallback cb = nullptr);
 
 	// Set the command to accept arbitrary extra arguments.
 	void setVariadic(bool v) { variadic = v; }
